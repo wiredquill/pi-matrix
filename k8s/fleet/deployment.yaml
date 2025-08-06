@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: matrix-update-server
+  namespace: matrix-system
+  labels:
+    app: matrix-update-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: matrix-update-server
+  template:
+    metadata:
+      labels:
+        app: matrix-update-server
+    spec:
+      containers:
+      - name: matrix-update-server
+        image: ghcr.io/wiredquill/matrix-update-server:latest
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: GITHUB_REPO
+          value: "wiredquill/pi-matrix"
+        - name: GITHUB_BRANCH
+          value: "main"
+        - name: CACHE_DURATION
+          value: "300"  # 5 minutes
+        - name: PORT
+          value: "8000"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL

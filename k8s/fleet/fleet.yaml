@@ -1,0 +1,19 @@
+apiVersion: fleet.cattle.io/v1alpha1
+kind: GitRepo
+metadata:
+  name: matrix-update-server
+  namespace: fleet-system
+spec:
+  repo: https://github.com/wiredquill/wq-fleet
+  branch: main
+  paths:
+  - matrix-update-server
+  targets:
+  - name: production
+    clusterSelector:
+      matchLabels:
+        env: production
+  - name: staging
+    clusterSelector:
+      matchLabels:
+        env: staging
