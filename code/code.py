@@ -904,16 +904,11 @@ class MatrixController:
         
         print("System ready! Listening for messages...")
         
-        # Display IP address prominently after full setup
-        if self.device_ip:
-            ip_text = f"IP: {self.device_ip}"
-            # Calculate duration for complete scroll (like status command)
-            scroll_duration = (len(ip_text) + 8) * 0.4 * 2  # 2 complete cycles
-            self.message_queue.add_message('blue', ip_text, 'system', scroll_duration, None, False)
-            self.display_current_message()
-            print(f"Displaying IP: {self.device_ip} (duration: {scroll_duration}s)")
+        # Display simple READY message
+        self.message_queue.add_message('green', 'READY', 'system', 3, None, False)
+        self.display_current_message()
         
-        # System will go black when idle (after IP display timeout)
+        # System will go black when idle (after READY timeout)
         
         # Main loop
         last_mqtt_check = 0
