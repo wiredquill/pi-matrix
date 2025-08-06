@@ -12,7 +12,7 @@ import adafruit_requests as requests
 import microcontroller
 
 # Version for OTA updates
-VERSION = "1.0.0"
+VERSION = "1.0.2"
 
 # Color-based priority levels (higher number = higher priority)
 PRIORITY_LEVELS = {
