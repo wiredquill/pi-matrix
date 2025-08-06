@@ -301,7 +301,9 @@ class MatrixController:
             "matrix/meeting",              # Broadcast meeting mode
             "matrix/meeting/+",            # Broadcast meeting with timer
             f"matrix/{self.device_id}/meeting",        # Device-specific meeting mode
-            f"matrix/{self.device_id}/meeting/+"       # Device-specific meeting with timer
+            f"matrix/{self.device_id}/meeting/+",      # Device-specific meeting with timer
+            "matrix/meeting/stop",         # Broadcast meeting stop
+            f"matrix/{self.device_id}/meeting/stop"    # Device-specific meeting stop
         ])
         
         for topic in topics:
@@ -355,7 +357,7 @@ class MatrixController:
                 if len(topic_parts) > update_index and topic_parts[update_index] == "meeting":
                     print(f"Meeting command received ({'device-specific' if is_device_specific else 'broadcast'})")
                     
-                    # Check for timer parameter (meeting/30, meeting/off, etc.)
+                    # Check for timer parameter (meeting/30, meeting/off, meeting/stop, etc.)
                     if len(topic_parts) > update_index + 1:
                         timer_param = topic_parts[update_index + 1]
                         
@@ -692,9 +694,25 @@ class MatrixController:
             meeting_text = "📞 ON CALL"
             color = 'red'
         
-        # Display as persistent message (high priority, long duration)
-        self.message_queue.add_message(color, meeting_text, 'meeting', 999999, None, True)  # Very long duration
-        self.display_current_message()
+        # Create a temporary meeting message for display
+        # This will be overwritten by higher priority messages
+        temp_message = {
+            'priority': 0,  # Lowest priority - can be interrupted by anything
+            'priority_name': color,
+            'text': meeting_text,
+            'source': 'meeting',
+            'duration': 999999,  # Long duration
+            'animation': None,
+            'is_alert': True,
+            'timestamp': time.monotonic()
+        }
+        
+        # Only show if no other message is currently displaying
+        if (self.message_queue.current_message is None or 
+            self.message_queue.current_message.get('source') == 'meeting'):
+            self.message_queue.current_message = temp_message
+            self.message_queue.display_start_time = time.monotonic()
+            self.display_current_message()
     
     def update_meeting_display(self):
         """Update meeting display every second"""
@@ -741,12 +759,12 @@ class MatrixController:
                 self.display_current_message()
             elif self.message_queue.current_message is not None:
                 # No more messages
+                self.message_queue.current_message = None
                 if self.meeting_mode:
                     # In meeting mode, show meeting status instead of going idle
                     self.display_meeting_status()
                 else:
                     # Normal mode, clear display (go black when idle)
-                    self.message_queue.current_message = None
                     self.clear_display()
         
         # No more flashing updates needed
