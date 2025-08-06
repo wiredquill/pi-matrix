@@ -666,7 +666,14 @@ class MatrixController:
         """Stop meeting mode and return to normal"""
         self.meeting_mode = False
         self.meeting_duration = 0
-        print("Meeting mode ended")
+        self.meeting_start_time = 0
+        print("Meeting mode ended - cleared all meeting state")
+        
+        # Clear current meeting message if it's showing
+        if (self.message_queue.current_message and 
+            self.message_queue.current_message.get('source') == 'meeting'):
+            self.message_queue.current_message = None
+            
         self.clear_display()
     
     def display_meeting_status(self):
@@ -684,10 +691,9 @@ class MatrixController:
                 meeting_text = "📞 MEETING DONE"
                 color = 'red'
             else:
-                # Show countdown
-                mins = int(remaining_minutes)
-                secs = int((remaining_minutes - mins) * 60)
-                meeting_text = f"📞 CALL {mins:02d}:{secs:02d}"
+                # Show countdown in minutes only
+                mins = int(remaining_minutes) + 1  # Round up to next minute
+                meeting_text = f"📞 MEETING {mins}"
                 color = 'orange'
         else:
             # No timer, just show "ON CALL"
@@ -813,7 +819,9 @@ class MatrixController:
             version_url = f"{self.update_server}/matrix/version.txt"
             print(f"Checking version at: {version_url}")
             
-            response = requests.get(version_url)
+            # Add timeout and more detailed error handling
+            response = requests.get(version_url, timeout=10)
+            print(f"Response status: {response.status_code}")
             if response.status_code == 200:
                 latest_version = response.text.strip()
                 print(f"Current: {VERSION}, Latest: {latest_version}")
