@@ -1,0 +1,15 @@
+# Secrets and configuration files
+code/secrets.py
+secrets.py
+
+# CircuitPython compiled files
+*.mpy
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
