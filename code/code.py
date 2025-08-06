@@ -29,7 +29,7 @@ DISPLAY_DURATIONS = {
     'orange': 12,
     'yellow': 10, 
     'blue': 8,
-    'green': 0  # Persistent until overridden
+    'green': 8  # Same as blue - no more persistent messages
 }
 
 # Color schemes - default is colored text on black background
@@ -130,11 +130,7 @@ class MessageQueue:
         if self.current_message is None:
             return True
             
-        # Green messages persist until overridden
-        if self.current_message['priority_name'] == 'green':
-            return len(self.messages) > 0
-            
-        # Other messages have time limits
+        # All messages now have time limits (no more persistent green messages)
         elapsed = time.monotonic() - self.display_start_time
         return elapsed >= self.current_message['duration']
 
@@ -157,6 +153,7 @@ class MatrixController:
         self.is_scrolling = False
         self.update_server = None
         self.last_update_check = 0
+        self.device_ip = None
         self.setup_display()
         
     def setup_display(self):
@@ -209,8 +206,9 @@ class MatrixController:
                 ip_str = f"{ip[0]}.{ip[1]}.{ip[2]}.{ip[3]}"
                 print(f"Connected! IP: {ip_str}")
                 
-                self.show_status("WIFI", f"Connected: {ip_str}")
-                time.sleep(2)
+                # Store IP for display after MQTT setup
+                self.device_ip = ip_str
+                print(f"Stored IP: {ip_str}")
                 return True
                 
             except Exception as e:
@@ -290,7 +288,9 @@ class MatrixController:
             "matrix/update/check",         # Broadcast update check
             "matrix/update/deploy",        # Broadcast update deploy
             f"matrix/{self.device_id}/update/check",   # Device-specific update check
-            f"matrix/{self.device_id}/update/deploy"   # Device-specific update deploy
+            f"matrix/{self.device_id}/update/deploy",   # Device-specific update deploy
+            "matrix/status",               # Broadcast status request
+            f"matrix/{self.device_id}/status"  # Device-specific status request
         ])
         
         for topic in topics:
@@ -300,7 +300,7 @@ class MatrixController:
             except Exception as e:
                 print(f"Failed to subscribe to {topic}: {e}")
         
-        self.show_status("READY", "System Ready")
+        # Don't show READY message, just go to idle after IP display
     
     def mqtt_disconnected(self, client, userdata, rc):
         """MQTT disconnection callback"""
@@ -332,6 +332,12 @@ class MatrixController:
                         elif topic_parts[update_index + 1] == "deploy":
                             print(f"Update deploy requested ({'device-specific' if is_device_specific else 'broadcast'})")
                             self.deploy_update()
+                    return
+                
+                # Handle status commands
+                if len(topic_parts) > update_index and topic_parts[update_index] == "status":
+                    print(f"Status requested ({'device-specific' if is_device_specific else 'broadcast'})")
+                    self.show_status_info()
                     return
                 
                 # Handle regular color messages
@@ -575,8 +581,26 @@ class MatrixController:
         else:
             display_msg = f"{category}\n{message}"
             
-        self.message_queue.add_message('green', display_msg, 'system', None, None, False)
+        self.message_queue.add_message('blue', display_msg, 'system', 5, None, False)
         self.display_current_message()
+    
+    def show_status_info(self):
+        """Display system status information"""
+        # Create comprehensive status message
+        if self.device_ip:
+            status_text = f"IP: {self.device_ip} | v{VERSION} | ID: {self.device_id}"
+        else:
+            status_text = f"v{VERSION} | ID: {self.device_id}"
+        
+        # Calculate duration for 2 complete scroll cycles
+        # Each character scrolls at 0.4 seconds, plus padding, times 2 cycles
+        scroll_duration = (len(status_text) + 8) * 0.4 * 2  # 2 complete cycles
+        
+        # Display for long enough to scroll twice
+        self.message_queue.add_message('blue', status_text, 'status', scroll_duration, None, False)
+        self.display_current_message()
+        
+        print(f"Status info displayed: {status_text} (duration: {scroll_duration}s)")
     
     def reconnect_mqtt(self):
         """Attempt to reconnect MQTT"""
@@ -601,10 +625,9 @@ class MatrixController:
                 self.message_queue.display_start_time = time.monotonic()
                 self.display_current_message()
             elif self.message_queue.current_message is not None:
-                # No more messages, clear display for non-green messages
-                if self.message_queue.current_message['priority_name'] != 'green':
-                    self.message_queue.current_message = None
-                    self.clear_display()
+                # No more messages, clear display (go black when idle)
+                self.message_queue.current_message = None
+                self.clear_display()
         
         # No more flashing updates needed
     
@@ -670,7 +693,7 @@ class MatrixController:
                         }
                         self.mqtt.publish('matrix/update/status', json.dumps(update_info))
                 else:
-                    self.message_queue.add_message('green', f"Up to date: {VERSION}", 'update', 5, None, False)
+                    self.message_queue.add_message('blue', f"Up to date: {VERSION}", 'update', 5, None, False)
                     self.display_current_message()
             else:
                 self.show_status("ERROR", f"Update check failed: {response.status_code}")
@@ -743,9 +766,13 @@ class MatrixController:
         
         print("System ready! Listening for messages...")
         
-        # Show version on startup
-        self.message_queue.add_message('green', f"v{VERSION}", 'system', 3, None, False)
-        self.display_current_message()
+        # Display IP address prominently after full setup
+        if self.device_ip:
+            self.message_queue.add_message('blue', f"IP: {self.device_ip}", 'system', 10, None, False)
+            self.display_current_message()
+            print(f"Displaying IP: {self.device_ip}")
+        
+        # System will go black when idle (after IP display timeout)
         
         # Main loop
         last_mqtt_check = 0
