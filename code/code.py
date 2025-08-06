@@ -154,6 +154,13 @@ class MatrixController:
         self.update_server = None
         self.last_update_check = 0
         self.device_ip = None
+        
+        # Meeting mode state
+        self.meeting_mode = False
+        self.meeting_start_time = 0
+        self.meeting_duration = 0  # in minutes, 0 = no timer
+        self.meeting_last_update = 0
+        
         self.setup_display()
         
     def setup_display(self):
@@ -290,7 +297,11 @@ class MatrixController:
             f"matrix/{self.device_id}/update/check",   # Device-specific update check
             f"matrix/{self.device_id}/update/deploy",   # Device-specific update deploy
             "matrix/status",               # Broadcast status request
-            f"matrix/{self.device_id}/status"  # Device-specific status request
+            f"matrix/{self.device_id}/status",  # Device-specific status request
+            "matrix/meeting",              # Broadcast meeting mode
+            "matrix/meeting/+",            # Broadcast meeting with timer
+            f"matrix/{self.device_id}/meeting",        # Device-specific meeting mode
+            f"matrix/{self.device_id}/meeting/+"       # Device-specific meeting with timer
         ])
         
         for topic in topics:
@@ -338,6 +349,39 @@ class MatrixController:
                 if len(topic_parts) > update_index and topic_parts[update_index] == "status":
                     print(f"Status requested ({'device-specific' if is_device_specific else 'broadcast'})")
                     self.show_status_info()
+                    return
+                
+                # Handle meeting commands
+                if len(topic_parts) > update_index and topic_parts[update_index] == "meeting":
+                    print(f"Meeting command received ({'device-specific' if is_device_specific else 'broadcast'})")
+                    
+                    # Check for timer parameter (meeting/30, meeting/off, etc.)
+                    if len(topic_parts) > update_index + 1:
+                        timer_param = topic_parts[update_index + 1]
+                        
+                        if timer_param.lower() in ['off', 'stop', 'end']:
+                            self.stop_meeting_mode()
+                        else:
+                            try:
+                                duration = int(timer_param)
+                                self.start_meeting_mode(duration)
+                            except ValueError:
+                                print(f"Invalid timer parameter: {timer_param}")
+                                self.start_meeting_mode()  # Start without timer
+                    else:
+                        # No timer parameter, parse message for duration or command
+                        try:
+                            msg_text = str(message).lower().strip()
+                            if msg_text in ['off', 'stop', 'end']:
+                                self.stop_meeting_mode()
+                            elif msg_text.isdigit():
+                                duration = int(msg_text)
+                                self.start_meeting_mode(duration)
+                            else:
+                                self.start_meeting_mode()  # Start without timer
+                        except:
+                            self.start_meeting_mode()  # Default start
+                    
                     return
                 
                 # Handle regular color messages
@@ -602,6 +646,77 @@ class MatrixController:
         
         print(f"Status info displayed: {status_text} (duration: {scroll_duration}s)")
     
+    def start_meeting_mode(self, duration_minutes=0):
+        """Start meeting mode with optional countdown"""
+        self.meeting_mode = True
+        self.meeting_start_time = time.monotonic()
+        self.meeting_duration = duration_minutes
+        self.meeting_last_update = 0
+        
+        if duration_minutes > 0:
+            print(f"Meeting mode started with {duration_minutes} minute timer")
+        else:
+            print("Meeting mode started (no timer)")
+        
+        self.display_meeting_status()
+    
+    def stop_meeting_mode(self):
+        """Stop meeting mode and return to normal"""
+        self.meeting_mode = False
+        self.meeting_duration = 0
+        print("Meeting mode ended")
+        self.clear_display()
+    
+    def display_meeting_status(self):
+        """Display current meeting status"""
+        if not self.meeting_mode:
+            return
+            
+        # Create meeting display
+        if self.meeting_duration > 0:
+            elapsed_minutes = (time.monotonic() - self.meeting_start_time) / 60
+            remaining_minutes = max(0, self.meeting_duration - elapsed_minutes)
+            
+            if remaining_minutes <= 0:
+                # Timer expired, show "DONE" message
+                meeting_text = "📞 MEETING DONE"
+                color = 'red'
+            else:
+                # Show countdown
+                mins = int(remaining_minutes)
+                secs = int((remaining_minutes - mins) * 60)
+                meeting_text = f"📞 CALL {mins:02d}:{secs:02d}"
+                color = 'orange'
+        else:
+            # No timer, just show "ON CALL"
+            meeting_text = "📞 ON CALL"
+            color = 'red'
+        
+        # Display as persistent message (high priority, long duration)
+        self.message_queue.add_message(color, meeting_text, 'meeting', 999999, None, True)  # Very long duration
+        self.display_current_message()
+    
+    def update_meeting_display(self):
+        """Update meeting display every second"""
+        if not self.meeting_mode:
+            return
+            
+        current_time = time.monotonic()
+        
+        # Update display every second
+        if current_time - self.meeting_last_update >= 1.0:
+            self.meeting_last_update = current_time
+            
+            # Check if timer expired
+            if self.meeting_duration > 0:
+                elapsed_minutes = (current_time - self.meeting_start_time) / 60
+                if elapsed_minutes >= self.meeting_duration:
+                    # Timer finished, show completion
+                    self.display_meeting_status()
+            else:
+                # No timer, just refresh display
+                self.display_meeting_status()
+    
     def reconnect_mqtt(self):
         """Attempt to reconnect MQTT"""
         if self.connection_attempts < 10:
@@ -625,9 +740,14 @@ class MatrixController:
                 self.message_queue.display_start_time = time.monotonic()
                 self.display_current_message()
             elif self.message_queue.current_message is not None:
-                # No more messages, clear display (go black when idle)
-                self.message_queue.current_message = None
-                self.clear_display()
+                # No more messages
+                if self.meeting_mode:
+                    # In meeting mode, show meeting status instead of going idle
+                    self.display_meeting_status()
+                else:
+                    # Normal mode, clear display (go black when idle)
+                    self.message_queue.current_message = None
+                    self.clear_display()
         
         # No more flashing updates needed
     
@@ -768,9 +888,12 @@ class MatrixController:
         
         # Display IP address prominently after full setup
         if self.device_ip:
-            self.message_queue.add_message('blue', f"IP: {self.device_ip}", 'system', 10, None, False)
+            ip_text = f"IP: {self.device_ip}"
+            # Calculate duration for complete scroll (like status command)
+            scroll_duration = (len(ip_text) + 8) * 0.4 * 2  # 2 complete cycles
+            self.message_queue.add_message('blue', ip_text, 'system', scroll_duration, None, False)
             self.display_current_message()
-            print(f"Displaying IP: {self.device_ip}")
+            print(f"Displaying IP: {self.device_ip} (duration: {scroll_duration}s)")
         
         # System will go black when idle (after IP display timeout)
         
@@ -798,6 +921,9 @@ class MatrixController:
                 
                 # Update scrolling
                 self.update_scrolling()
+                
+                # Update meeting display if in meeting mode
+                self.update_meeting_display()
                 
                 # Send heartbeat
                 self.heartbeat()
